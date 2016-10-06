@@ -14,5 +14,7 @@ TODO:
 * Simulate server ready and cluster ready ... variable sleep in Server class?
 * simulate server death
 * Implement Cluster class -- as a controller class to carry out cluster level initialization
-    ..* has a list of servers
+    * has a list of servers which form the cluster
+    * cluster related properties
+    * initialize k-v distribution and send to master
     
