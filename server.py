@@ -98,7 +98,7 @@ class Server:
                         print("{server}: Received 'GET' request".format(server=self.name))
                     
                     try:
-                        if data['data'] in data_dict:
+                        if data['data'] in self.data_dict.keys():
                             response = {    'status'    :   self.__SUCCESS, 
                                             'data'      :   self.data_dict[data['data']] 
                                         }    
@@ -107,7 +107,7 @@ class Server:
                         
                         client_socket.sendall(json.dumps(response).encode("utf-8"))
                     
-                    except:
+                    except Exception as e:
                         response = {'status' : self.__INT_ERROR }
                         client_socket.sendall(json.dumps(response).encode('utf-8'))
                 
