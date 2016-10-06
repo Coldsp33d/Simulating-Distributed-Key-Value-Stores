@@ -1,5 +1,5 @@
 ## Simulating Distributed Key-Value Stores
-    *made with python3 *
+_Written in Python 3_
 ***
 
 TODO: 
