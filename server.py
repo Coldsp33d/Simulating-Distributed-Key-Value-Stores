@@ -1,23 +1,3 @@
-""" TODO: 
-
-Automatic port allocation needed - don't hardcode ports
-Integate with zookeeper - zookeeper coordination as part of the cluster or as part of the client
-Designation of masters - how should this be done?
-Distributing the range of keys across servers
-Designation of backup servers for appropriate range
-Hadoop's hashing function for keys... should make things more sane
-data integrity
-simulate server ready ... variable sleep?
-simulate server death
-
-
-Cluster class -- is this s good way to do it? yes.. controller class
-
-    has a list of servers
-    
-
-"""
-
 import socket
 import pprint
 import json
@@ -35,9 +15,8 @@ class Server:
     __NOT_FOUND = "404 Not Found"
     __INT_ERROR = "500 Internal Server Error"
 
-    def __init__(self, server_address, buf_size=None):
+    def __init__(self, server_address=('', 0), buf_size=None):
         self.data_dict = {}
-        self.server_address = (self.IP, self.port) = server_address
 
         self.buf_size = buf_size if buf_size else self.__buf_size
 
@@ -46,9 +25,11 @@ class Server:
         self.socket.bind(server_address)
         self.socket.listen(10)
 
+        self.server_address = (self.IP, self.port) = socket.gethostbyname(
+                                                                        socket.gethostname()
+                                                                        ), \
+                                                            self.socket.getsockname()[1]
         self.name = socket.getfqdn(self.IP)
-
-        print('{server}: Serving HTTP on port {port}...'.format(server=self.name, port=self.port))
 
 
     def __del__(self):
@@ -58,6 +39,8 @@ class Server:
 
     def __serve_forever(self, silence):
         shutdown_signal = False
+
+        print('{server}: Serving HTTP on port {port}...'.format(server=self.name, port=self.port))
 
         while self.__keep_alive:
             (client_socket, client_address) = self.socket.accept()
