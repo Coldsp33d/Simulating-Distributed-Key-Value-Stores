@@ -39,7 +39,7 @@ class Server:
     __NOT_FOUND = "404 Not Found"
     __INT_ERROR = "500 Internal Server Error"
 
-    __timeout = 3 # registration timeout
+    __timeout = 13 # registration timeout
 
 
     def __init__(self, server_id, zookeeper_handler, server_address=('', 0), buf_size=None):
@@ -58,7 +58,7 @@ class Server:
 
         self.zookeeper_handler.set_node('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
         
-        #time.sleep(np.random.randint(low=0, high=1)) # seconds
+        time.sleep(np.random.randint(low=0, high=10)) # seconds
 
         is_master = False
         with self.zookeeper_handler.get_lock('/cluster/', simultaneous=0, wait=0):
