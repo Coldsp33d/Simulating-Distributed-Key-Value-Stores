@@ -4,7 +4,7 @@ _Written in Python 3_
 
 TODO: 
 
-* Automatic port allocation needed - don't hardcode ports
+* Automatic port allocation needed - don't hardcode ports (DONE)
 * Integate with zookeeper - zookeeper coordination as part of the cluster or as part of the client
 * Designation of masters - how should this be done?
 * Distributing the range of keys across servers
