@@ -4,6 +4,7 @@ import json
 import threading
 import time
 import numpy as np
+import signal
 
 INT_MAX = np.int64(2 ** 63 - 1)
 
@@ -34,7 +35,7 @@ class Server:
     __NOT_FOUND = "404 Not Found"
     __INT_ERROR = "500 Internal Server Error"
 
-    __timeout = 30 # seconds before not accepting any more child server registrations
+    __timeout = 15 # registration timeout
 
 
     def __init__(self, server_id, zookeeper_handler, server_address=('', 0), buf_size=None):
@@ -61,24 +62,29 @@ class Server:
 
             if master_address == '':
                 self.zookeeper_handler.set_node('/cluster/', data=self.zookeeper_handler.get('/cluster/')['data'].update(
-                        {   'master' : ':'.join(list(map(str, self.server_address))), 
+                        {   'master' : list(self.server_address) , 
                             'status' :  'initializing' 
                         })) # better practice to update the existing dict rather than reinitialize it with a possible loss of data
 
+                print
+                print
+                pprint.pprint(self.zookeeper_handler.get('/cluster/servers/'))
+
                 is_master = True
+
+                print("{server}:\tNow assigned role of MASTER...".format(server=self.name)) 
                 self.name = '[MASTER] ' + self.name
-                print("{server}: Now assigned role of master".format(server=self.name)) 
 
             else:
+                print("{server}:\tNow assigned role of SLAVE...".format(server=self.name)) 
                 self.name = '[SLAVE] ' + self.name
-                print("{server}: Now assigned role of slave".format(server=self.name)) 
 
         if is_master:    
             self.slave_list = []
             self.__invoke_master_routine()
 
         else: 
-            self.__invoke_slave_routine(master_address)
+            self.__invoke_slave_routine(tuple(master_address))
 
         data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.primary_key))['data']
         self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.primary_key), data=data.update({'primary' : ':'.join(list(map(str, self.server_address)))} ))
@@ -87,11 +93,13 @@ class Server:
 
 
     def __del__(self):
-        print("{server}: Shutting down, thanks!".format(server=self.name))
+        print("{server}:\tShutting down, thanks!".format(server=self.name))
         self.socket.close()
 
 
     def __invoke_master_routine(self):
+        def sig_handler(*args):
+            raise Exception("The alarm's ringing")
         # now listen on a socket for signals from other servers... write a new function to do this and in a separate thread
 
         """ 1.  call Threading.Thread on the function, wait for x minutes
@@ -105,30 +113,35 @@ class Server:
          """
         self.socket.listen(10)
 
-        start = time.time()
-        while time.time() <= start + self.__timeout:
-            (client_socket, client_address) = self.socket.accept()
+        signal.signal(signal.SIGALRM, sig_handler) # setting up an alarm after which the server stops waiting for children to register 
+        signal.alarm(self.__timeout)
 
-            print("{server}: Registering {client}...".format(server=self.name, client=client_address))
+        try:
+            while True:
+                (client_socket, client_address) = self.socket.accept()
 
-            data = client_socket.recv(self.buf_size)
-            try:
-                data = json.loads(data.decode('utf-8'))
-            except:
-                response = {'status' : self.__BAD_REQ }
-                client_socket.sendall(json.dumps(response).encode('utf-8'))
-                continue
+                print("{server}:\tRegistering {client}...".format(server=self.name, client=client_address))
 
-            response = {'status' : self.__SUCCESS }
-            client_socket.sendall(json.dumps(response).encode('utf-8')) 
-            client_socket.close()
+                data = client_socket.recv(self.buf_size)
+                try:
+                    data = json.loads(data.decode('utf-8'))
+                except:
+                    response = {'status' : self.__BAD_REQ }
+                    client_socket.sendall(json.dumps(response).encode('utf-8'))
+                    continue
 
-            self.slave_list.append(tuple(data['address']))
+                response = {'status' : self.__SUCCESS }
+                client_socket.sendall(json.dumps(response).encode('utf-8')) 
+                client_socket.close()
 
-        self.zookeeper_handler.set_data('/cluster/', data=self.nd.get('/cluster/')['data'].update({'status' :  'ready'
-                            }))
+                self.slave_list.append(tuple(data['address']))
 
-        self.socket = create_socket(sock=self.socket) # will shutdown the existing socket and recreate it with the same address
+        except:
+            print("{server}:\tStopping registration...".format(server=self.name))
+
+        self.zookeeper_handler.set_data('/cluster/', data=self.zookeeper_handler.get('/cluster/')['data'].update({'status' :  'ready'}))
+
+        self.socket = create_socket(self.server_address, sock=self.socket) # will shutdown the existing socket and recreate it with the same address
 
         x, y = [i for i in range(len(self.slave_list) + 1)], [(i + 1) % len(self.slave_list) for i in range(len(self.slave_list) + 1)]
 
@@ -149,11 +162,10 @@ class Server:
         self.primary_key = key_list[0][0]
         self.secondary_key = key_list[0][1]
 
-
         time.sleep(1)
 
         for i, slave_address in enumerate(self.slave_list):
-            print("{server}: Sending config info to {client}...".format(server=self.name, client=slave_address))
+            print("{server}:\tSending config info to {client}...".format(server=self.name, client=slave_address))
 
             data = {'primary' : key_list[i + 1][0], 'secondary' : key_list[i + 1][1] }
 
@@ -171,7 +183,7 @@ class Server:
         self.socket.sendall(json.dumps(data).encode('utf-8'))
         _ = self.socket.recv(self.buf_size)
 
-        self.socket = create_socket(sock=self.socket)
+        self.socket = create_socket(self.server_address, sock=self.socket)
         self.socket.listen(1)
 
         (client_socket, client_address) = self.socket.accept()
