@@ -3,7 +3,6 @@ import socket
 import random
 import json
 
-SERVER_ADDRESS = (IP, PORT) = '', 8888
 BUFFER_SIZE = 1024
 
 def get_socket(server_address=('', 0), sock_type='tcp'):
@@ -21,57 +20,69 @@ class Client:
 
 	def __init__(self, buf_size=None):
 		self.buf_size = buf_size if buf_size else self.__buf_size
-		self.socket = get_socket()
-		
+
 		self.cluster = cluster.Cluster()
 		self.cluster.master = self.cluster.get_master()
 
 	def __del__(self):
 		self.socket.close()
 
-	def get_server(self, type='primary'):
-		self.socket.connect(self.cluster.master)
-		request = { 'op' 	: 'GET MAPPING', 
-					'type'	: 'primary' 
+	def __get_server(self, key, dtype='primary'):
+		socket = get_socket()
+		socket.connect(self.cluster.master)
+		request = { 'op' 	: 'MAP', 
+					'type'	: dtype, 
 					'key'	: str(key) 
 				  }
 
-		self.socket.sendall(json.dumps(request).encode('utf-8'))
+		socket.sendall(json.dumps(request).encode('utf-8'))
 
-		response = json.loads(self.socket.recv(self.buf_size).decode('utf-8'))
+		response = json.loads(socket.recv(self.buf_size).decode('utf-8'))
+		socket.close()
+
 		return tuple(response['data']['address'])
 		
-	def put(self, key, value):
+	def put(self, key, value, address):
+		socket = get_socket()
+		address = self.__get_server(key, dtype='primary')
 
+		try:
+			socket.connect(address)
+		except:
+			secondary_address = self.__get_server(key, dtype='secondary')
+			socket.connect(secondary_address)
 
 		request = { 'op' 	: 'PUT', 
 					'data' 	: { 
-								str(key) : str(value) 
-								} 
+							str(key) : str(value) 
+							} 
 				  }
-		self.socket.sendall(json.dumps(request).encode('utf-8'))
-		
-		response = json.loads(self.socket.recv(self.buf_size).decode('utf-8'))
-		
-		return response
+		socket.sendall(json.dumps(request).encode('utf-8'))		
+		response = json.loads(socket.recv(self.buf_size).decode('utf-8'))
+		socket.close()
 
+		return response
+		
 	def get(self, key):
+		socket = get_socket()
+		address = self.__get_server(key, dtype='primary')
+
+		try:
+			socket.connect(address)
+		except:
+			secondary_address = self.__get_server(key, dtype='secondary')
+			socket.connect(secondary_address)
+
 		request = 	{	'op' 	: 	'GET', 
 						'data' 	: 	str(key)
 					}
-		self.socket.sendall(json.dumps(request).encode('utf-8'))
-
-		response = json.loads(self.socket.recv(self.buf_size).decode('utf-8'))
+		socket.sendall(json.dumps(request).encode('utf-8'))
+		response = json.loads(socket.recv(self.buf_size).decode('utf-8'))
+		socket.close()
 		
 		return response
 
-	def shutdown(self):
-		request = {'op' : 'CLOSE'}
-
-		self.socket.send(json.dumps(request).encode('utf-8'))	
-
 if __name__ == "__main__":
-	client = Client(server_address=SERVER_ADDRESS)
-	
+	client = Client()
 
 
