@@ -7,22 +7,20 @@ import threading
 import time
 import numpy as np
 import random
+import os
 
 INT_MAX = np.int64(2 ** 63 - 1)
 
 
-def create_TCP_socket(server_address, sock=None):
-    try:
-        sock.shutdown()
-        sock.close() 
-    except: 
-        pass
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    socket.setdefaulttimeout( 300 )
-    sock.bind(server_address)
-    return sock
+def get_socket(server_address=('', 0), sock_type='tcp'):
+    if sock_type == 'tcp':
+        tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        tcp_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        tcp_socket.bind(server_address)
+        return tcp_socket
+    
+    else:
+        pass # not implemented, nor will there be a need
 
 
 def get_partition(string, num_servers):
@@ -39,7 +37,7 @@ class Server:
     __NOT_FOUND = "404 Not Found"
     __INT_ERROR = "500 Internal Server Error"
 
-    __timeout = 13 # registration timeout
+    __timeout = 8 # registration timeout
 
 
     def __init__(self, server_id, zookeeper_handler, server_address=('', 0), buf_size=None):
@@ -48,8 +46,9 @@ class Server:
         self.zookeeper_handler = zookeeper_handler
         self.buf_size = buf_size if buf_size else self.__buf_size
 
-        self.socket = create_TCP_socket(server_address)
-
+        self.socket = get_socket(server_address)
+        self.socket.listen(100)
+        
         self.server_address = (self.IP, self.port) = socket.gethostbyname(
                                                                         socket.gethostname()
                                                                         ), \
@@ -58,38 +57,58 @@ class Server:
 
         self.zookeeper_handler.set_node('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
         
-        time.sleep(np.random.randint(low=0, high=10)) # seconds
+        np.random.seed(os.getpid())
 
+        if(self.server_id == 1):
+            self.zookeeper_handler.set_node('/cluster', data=self.zookeeper_handler.get('/cluster')['data'].update(
+                        {   'master' : list(self.server_address) , 
+                            'status' :  'initializing' 
+                        }))
+            pprint.pprint(self.zookeeper_handler.get('/cluster')['data'])
+        elif(self.server_id == 2):
+            time.sleep(5)
+            pprint.pprint(self.zookeeper_handler.get('/cluster')['data'])
+
+        #time.sleep(np.random.randint(low=0, high=5)) # random sleep for x seconds 
+
+        time.sleep(100)
         is_master = False
-        with self.zookeeper_handler.get_lock('/cluster/', simultaneous=0, wait=0):
-            master_address = self.zookeeper_handler.get('/cluster/')['data']['master']
 
+        with self.zookeeper_handler.get_lock('/cluster/lock'):
+            pprint.pprint(self.zookeeper_handler.get('/cluster')['data']['master'])
+            master_address = self.zookeeper_handler.get('/cluster')['data']['master']
+           
             if master_address == '':
-                self.zookeeper_handler.set_node('/cluster/', data=self.zookeeper_handler.get('/cluster/')['data'].update(
+                self.zookeeper_handler.set_node('/cluster', data=self.zookeeper_handler.get('/cluster')['data'].update(
                         {   'master' : list(self.server_address) , 
                             'status' :  'initializing' 
                         })) # better practice to update the existing dict rather than reinitialize it with a possible loss of data
-
                 is_master = True
 
-                print("{server}: Now assigned role of MASTER".format(server=self.name)) 
-                self.name = '[MASTER] ' + self.name
 
-            else:
-                print("{server}: Now assigned role of SLAVE".format(server=self.name)) 
-                self.name = '[ SLAVE ] ' + self.name
-
-        if is_master:    
+        if is_master:  
+            print("{server}: Assigned role of MASTER".format(server=self.name)) 
+            self.name = '[MASTER] ' + self.name  
             self.slave_list = []
             self.__invoke_master_routine()
 
         else: 
+            print("{server}: Assigned role of SLAVE".format(server=self.name)) 
+            self.name = '[SLAVE]  ' + self.name
             self.__invoke_slave_routine(tuple(master_address))
 
-        data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.primary_key))['data']
-        self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.primary_key), data=data.update({'primary' : ':'.join(list(map(str, self.server_address)))} ))
-        data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.secondary_key))['data']
-        self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.secondary_key), data=data.update({'secondary' : ':'.join(list(map(str, self.server_address)))} ))
+        time.sleep(np.random.randint(low=0, high=5)) # random sleep for x seconds 
+
+        with self.zookeeper_handler.get_lock('/cluster/lock'):
+            data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.primary_key))['data']
+            data = data if data is not None else {}    
+            data.update({'primary' : ':'.join(list(map(str, self.server_address)))})
+            self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.primary_key), data=data)
+
+            data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.secondary_key))['data']
+            data = data if data is not None else {}
+            data.update({'secondary' : ':'.join(list(map(str, self.server_address)))})
+            self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.secondary_key), data=data)
 
 
     def __del__(self):
@@ -109,41 +128,19 @@ class Server:
                     set the key to server mapping in zookeeper too
                     self.nd.set_node('/cluster/mapping/' + str(num), data={'primary': ..., 'secondary', ... })
         """
-        def __target():
-            start = time.time()
-            while time.time() <= start + self.__timeout:   
-                try:
-                    (client_socket, client_address) = self.socket.accept()
-                except:
-                    break
+        self.start() # deploy master and listen for registrations
 
-                print("{server}: Registering {client}".format(server=self.name, client=client_address))
-
-                data = client_socket.recv(self.buf_size)
-                try:
-                    data = json.loads(data.decode('utf-8'))
-                except:
-                    response = {'status' : self.__BAD_REQ }
-                    client_socket.sendall(json.dumps(response).encode('utf-8'))
-                    continue
-
-                response = {'status' : self.__SUCCESS }
-                client_socket.sendall(json.dumps(response).encode('utf-8')) 
-                client_socket.close()
-
-                self.slave_list.append(tuple(data['address']))
-
-
-        self.socket.listen(100)
-
-        thread = threading.Thread(target=__target)
-        thread.daemon = True # set daemon status to true so thread doesn't run forever
-        thread.start()
-        thread.join(self.__timeout)
+        print("{server}: Beginning registrations for slave nodes".format(server=self.name))
+        
+        self.accept_reg = True
+        start = time.time()
+        while  time.time() <= start + self.__timeout:
+            pass
+        self.accept_reg = False
 
         print("{server}: Stopping registration".format(server=self.name))
 
-        self.zookeeper_handler.set_data('/cluster/', data=self.zookeeper_handler.get('/cluster/')['data'].update({'status' :  'ready'}))
+        self.zookeeper_handler.set_data('/cluster', data=self.zookeeper_handler.get('/cluster')['data'].update({'status' :  'ready'}))
 
         x, y = [i for i in range(len(self.slave_list) + 1)], [(i + 1) % len(self.slave_list) for i in range(len(self.slave_list) + 1)]
 
@@ -164,130 +161,127 @@ class Server:
         self.primary_key = key_list[0][0]
         self.secondary_key = key_list[0][1]
 
-        time.sleep(1)
-
         for i, slave_address in enumerate(self.slave_list):
-            self.socket = create_TCP_socket(self.server_address, sock=self.socket) # will shutdown the existing socket and recreate it with the same address
-            print("{server}: Sending config info to {client}...".format(server=self.name, client=slave_address))
+            temp_socket = get_socket() # will shutdown the existing socket and recreate it with the same address
+            
+            print("{server}: Configuring {client}".format(server=self.name, client=':'.join(list(map(str, self.server_address))) ))
 
-            try:
-                print slave_address
-                self.socket.connect(slave_address)
-            except:
-                continue
+            temp_socket.connect(slave_address)
 
-            data = {'primary' : key_list[i + 1][0], 'secondary' : key_list[i + 1][1] }
-            self.socket.sendall(json.dumps(data).encode('utf-8'))
-            _ = self.socket.recv(self.buf_size) # don't continue until the slave acknowledges the request and closes the connection
+            data = {'op' : '__config__', 'primary' : key_list[i + 1][0], 'secondary' : key_list[i + 1][1] }
+            temp_socket.sendall(json.dumps(data).encode('utf-8'))
+            _ = temp_socket.recv(self.buf_size) # don't continue until the slave acknowledges the request and closes the connection
+            temp_socket.close() # just to be on the safe side
 
 
     def __invoke_slave_routine(self, master_address):
         # get the master address, and send a signal to the master that the other server is ready
         # wait for the ready signal, get server mappings from master and note it down
-        data = {'address' : [self.IP, self.port] }
+        temp_socket = get_socket()
+        temp_socket.connect(master_address)
 
-        self.socket.connect(master_address)
-        self.socket.sendall(json.dumps(data).encode('utf-8'))
-        _ = self.socket.recv(self.buf_size)
-
-        self.socket = create_TCP_socket(self.server_address, sock=self.socket)
-        self.socket.listen(10)
+        data = {'op' : '__reg__', 'address' : [self.IP, self.port] }
         
+        temp_socket.sendall(json.dumps(data).encode('utf-8'))
+        _ = temp_socket.recv(self.buf_size)
+        temp_socket.close()
+
+        self.start()
+
         print("{server}: Waiting for config info from master...".format(server=self.name))
 
-        (client_socket, client_address) = self.socket.accept()
-        data = client_socket.recv(self.buf_size)
-        try:
-            print("{server}: Received config info from master".format(server=self.name))
-            data = json.loads(data.decode('utf-8'))
-            response = {'status' : self.__SUCCESS }
-            client_socket.sendall(json.dumps(response).encode('utf-8')) 
-        except:
-            response = {'status' : self.__BAD_REQ }
-            client_socket.sendall(json.dumps(response).encode('utf-8'))
-        finally:
-            client_socket.close()      
+        self.configured = False
 
-        self.primary_key = data['primary']
-        self.secondary_key = data['secondary']
+        while not self.configured:
+            pass
 
 
-    def __serve_forever(self, silence):
-        shutdown_signal = False
-
-        print('{server}: Serving on port {port}...'.format(server=self.name, port=self.port))
-
+    def __listen_forever(self):
         while self.__keep_alive:
             (client_socket, client_address) = self.socket.accept()
-            if not silence:
-                print("{server}: Connected to {client}...".format(server=self.name, client=client_address))
 
-            while True:
-                data = client_socket.recv(self.buf_size)
+            data = client_socket.recv(self.buf_size)
+            try:
+                data = json.loads(data.decode('utf-8'))
+            except:
+                response = {'status' : self.__BAD_REQ }
+                client_socket.sendall(json.dumps(response).encode('utf-8'))
+                continue
+
+            if data['op'].lower() not in ["__reg__", "__config__", "get", "put"]:
+                response = {'status' : self.__BAD_REQ }
+                client_socket.sendall(json.dumps(response).encode('utf-8')) 
+                continue
+
+            op_code = data['op'].lower()
+
+            # This code only applies to the master
+            if op_code == "__reg__": 
                 try:
-                    data = json.loads(data.decode('utf-8'))
-                except:
-                    response = {'status' : self.__BAD_REQ }
-                    client_socket.sendall(json.dumps(response).encode('utf-8'))
-                    continue
+                    if self.accept_reg is True:
+                        self.slave_list.append(tuple(data['address']))
+                        
+                        print("{server}: Registering {client}".format(server=self.name, client=':'.join(list(map(str, data['address'])))))
 
-
-                if data['op'].lower() not in ["get", "put", "close"]:
-                    response = {'status' : self.__BAD_REQ }
-                    client_socket.sendall(json.dumps(response).encode('utf-8')) 
-                    continue
-
-                op_code = data['op'].lower()
-
-                if op_code == "put":
-                    if not silence:
-                        print("{server}: Received 'PUT' request".format(server=self.name))
-                    
-                    try:
-                        self.data_dict.update(data['data'])
                         response = {'status' : self.__SUCCESS }
                         client_socket.sendall(json.dumps(response).encode('utf-8')) 
-                    except:
-                        response = {'status' : self.__INT_ERROR }
-                        client_socket.sendall(json.dumps(response).encode('utf-8'))
+                    else:
+                        raise Exception
                 
-                elif op_code == "get":
-                    if not silence:
-                        print("{server}: Received 'GET' request".format(server=self.name))
-                    
-                    try:
-                        if data['data'] in self.data_dict.keys():
-                            response = {    'status'    :   self.__SUCCESS, 
-                                            'data'      :   self.data_dict[data['data']] 
-                                        }    
-                        else:
-                            response = {    'status'    :   self.__NOT_FOUND } 
-                        
-                        client_socket.sendall(json.dumps(response).encode("utf-8"))
-                    
-                    except Exception as e:
-                        response = {'status' : self.__INT_ERROR }
-                        client_socket.sendall(json.dumps(response).encode('utf-8'))
-                
-                elif op_code == "close":
-                    if not silence:
-                        print("{server}: Received 'CLOSE' request".format(server=self.name))
-                    
+                except:
+                        response = {'status' : self.__BAD_REQ }
+                        client_socket.sendall(json.dumps(response).encode('utf-8')) 
+
+            # This code only applies to the slave
+            elif op_code == "__config__":  
+                try:
+                    print("{server}: Received config info from master".format(server=self.name))
+                    self.primary_key = data['primary']
+                    self.secondary_key = data['secondary']
                     response = {'status' : self.__SUCCESS }
+                    client_socket.sendall(json.dumps(response).encode('utf-8')) 
+                    self.configured = True
+                except:
+                    response = {'status' : self.__INT_ERROR }
+                    client_socket.sendall(json.dumps(response).encode('utf-8'))                    
+
+            elif op_code == "put":
+                try:
+                    self.data_dict.update(data['data'])
+                    response = {'status' : self.__SUCCESS }
+                    client_socket.sendall(json.dumps(response).encode('utf-8')) 
+                
+                except:
+                    response = {'status' : self.__INT_ERROR }
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
-                    client_socket.close()
-                    break
+            
+            elif op_code == "get":
+                try:
+                    if data['data'] in self.data_dict.keys():
+                        response = {    'status'    :   self.__SUCCESS, 
+                                        'data'      :   self.data_dict[data['data']] 
+                                    }    
+                    else:
+                        response = {    'status'    :   self.__NOT_FOUND } 
+                    client_socket.sendall(json.dumps(response).encode("utf-8"))
+                
+                except:
+                    response = {'status' : self.__INT_ERROR }
+                    client_socket.sendall(json.dumps(response).encode('utf-8'))
+
+            client_socket.close()
 
 
-    def start(self, silence=False):
+    def start(self):
         self.__keep_alive = True
-        self.__service_task = threading.Thread(target=self.__serve_forever, args=(silence, ))
-        self.__service_task.start()
+        self.service_task = threading.Thread(target=self.__listen_forever)
+        self.service_task.daemon = True
+        self.service_task.start()
      
 
     def stop(self):
         self.__keep_alive = False
-        self.__service_task.join()
+        self.service_task.join(3)
 
 # -------------------------------------------------------------------------------------------
 

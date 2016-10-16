@@ -5,7 +5,7 @@ from server import Server
 import logging
 import pprint
 import dill
-from pathos.multiprocessing import ThreadPool as Pool
+from pathos.multiprocessing import ProcessingPool as Pool #ThreadingPool as Pool
 
 logging.basicConfig(level=logging.INFO)
 
@@ -14,7 +14,7 @@ class Cluster:
 	def __init__(self, num_servers=4):
 		self.nd = KazooServiceRegistry()
 		
-		self.nd.set_data('/cluster/', data={'master': '', 'status' :  ''})
+		self.nd.set_data('/cluster', data={'master': '', 'status' :  ''})
 		self.nd.set_data('/cluster/servers')
 		self.nd.set_data('/cluster/mapping')
 		
@@ -26,12 +26,7 @@ class Cluster:
 
 if __name__ == "__main__":
 	cluster = Cluster()
-	k1 = cluster.nd.get('/cluster/')
-	k2 = cluster.nd.get('/cluster/servers/')
-	k3 = cluster.nd.get('/cluster/mapping/')
-
-	print 
-
-	pprint.pprint(k1)
-	pprint.pprint(k2)
-	pprint.pprint(k3)
+	pprint.pprint(cluster.nd.get('/cluster/mapping/0'))
+	pprint.pprint(cluster.nd.get('/cluster/mapping/1'))
+	pprint.pprint(cluster.nd.get('/cluster/mapping/2'))
+	pprint.pprint(cluster.nd.get('/cluster/mapping/3'))
