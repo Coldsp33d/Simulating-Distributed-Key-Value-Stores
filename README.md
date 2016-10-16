@@ -5,6 +5,42 @@ _Written in Python 3_
 Non-children nodes are data nodes...
 Child nodes of data nodes are the ephmeral nodes
 
+Current Status:
+Output for 10 server cluster:
+
+{'key': 0,
+ 'primary': '192.168.1.117:59628',
+ 'secondary': '192.168.1.117:59624'}
+{'key': 1,
+ 'primary': '192.168.1.117:59622',
+ 'secondary': '192.168.1.117:59629'}
+{'key': 2,
+ 'primary': '192.168.1.117:59631',
+ 'secondary': '192.168.1.117:59630'}
+{'key': 3,
+ 'primary': '192.168.1.117:59627',
+ 'secondary': '192.168.1.117:59623'}
+{'key': 4,
+ 'primary': '192.168.1.117:59623',
+ 'secondary': '192.168.1.117:59631'}
+{'key': 5,
+ 'primary': '192.168.1.117:59630',
+ 'secondary': '192.168.1.117:59622'}
+{'key': 6,
+ 'primary': '192.168.1.117:59624',
+ 'secondary': '192.168.1.117:59626'}
+{'key': 7,
+ 'primary': '192.168.1.117:59625',
+ 'secondary': '192.168.1.117:59627'}
+{'key': 8,
+ 'primary': '192.168.1.117:59626',
+ 'secondary': '192.168.1.117:59628'}
+{'key': 9,
+ 'primary': '192.168.1.117:59629',
+ 'secondary': '192.168.1.117:59625'}
+
+(Data extracted from zookeeper using zookeeper handle)
+
 DONE
 * Automatic port allocation needed - don't hardcode ports (DONE)
 * Implement Cluster class -- as a controller class to carry out cluster level initialization (DONE)
