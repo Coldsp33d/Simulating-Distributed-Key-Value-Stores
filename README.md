@@ -5,8 +5,8 @@ _Written in Python 3_
 Non-children nodes are data nodes...
 Child nodes of data nodes are the ephmeral nodes
 
-Current Status:
-Output for 10 server cluster:
+
+Current Status (Output for 10 server cluster):
 
 {'key': 0,
  'primary': '192.168.1.117:59628',

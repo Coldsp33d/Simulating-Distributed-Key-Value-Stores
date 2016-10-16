@@ -72,5 +72,6 @@ class Client:
 
 if __name__ == "__main__":
 	client = Client(server_address=SERVER_ADDRESS)
+	
 
 

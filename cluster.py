@@ -43,3 +43,4 @@ if __name__ == "__main__":
 		secondary = ':'.join(list(map(str, cluster.nd.get('/cluster/mapping/%d/secondary' %i)['data']['address'])))
 		
 		pprint.pprint({'key' : i, 'primary' : primary, 'secondary' : secondary } )
+		
