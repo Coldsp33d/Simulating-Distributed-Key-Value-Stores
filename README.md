@@ -20,6 +20,7 @@ is where the error's happening
 
 TODO
 * nd_service_registry is a very buggy zookeeper client. It doesn't work half the time. It's time to look for alternatives.
+* Implement a socket for the cluster, let the cluster make all changes to the zookeeper structure
 * Master uploads data to zookeeper's /cluster node 
 * Implement Data integrity
 * Simulate server death
