@@ -56,5 +56,5 @@ DONE
 * Master uploads data to zookeeper's /cluster node  (DONE - actually every server uploads their own server mapping)
 
 TODO
-* Implement Data integrity
-* Simulate server death
+* Implement Data integrity (this is only half-done)
+* Simulate server death - either use interactive shell to stop a service, or use a flag and send a "resource temporarily unavailable for some time limit"
