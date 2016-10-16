@@ -57,21 +57,9 @@ class Server:
 
         self.zookeeper_handler.set_node('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
         
-        np.random.seed(os.getpid())
+        # np.random.seed(os.getpid())
+        time.sleep(np.random.randint(low=0, high=5)) # random sleep for x seconds 
 
-        if(self.server_id == 1):
-            self.zookeeper_handler.set_node('/cluster', data=self.zookeeper_handler.get('/cluster')['data'].update(
-                        {   'master' : list(self.server_address) , 
-                            'status' :  'initializing' 
-                        }))
-            pprint.pprint(self.zookeeper_handler.get('/cluster')['data'])
-        elif(self.server_id == 2):
-            time.sleep(5)
-            pprint.pprint(self.zookeeper_handler.get('/cluster')['data'])
-
-        #time.sleep(np.random.randint(low=0, high=5)) # random sleep for x seconds 
-
-        time.sleep(100)
         is_master = False
 
         with self.zookeeper_handler.get_lock('/cluster/lock'):

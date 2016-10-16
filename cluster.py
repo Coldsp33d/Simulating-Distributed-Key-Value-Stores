@@ -5,14 +5,14 @@ from server import Server
 import logging
 import pprint
 import dill
-from pathos.multiprocessing import ProcessingPool as Pool #ThreadingPool as Pool
+from pathos.multiprocessing import ThreadingPool as Pool # ProcessPool as Pool
 
 logging.basicConfig(level=logging.INFO)
 
 class Cluster:
 
 	def __init__(self, num_servers=4):
-		self.nd = KazooServiceRegistry()
+		self.nd = KazooServiceRegistry(rate_limit_calls=None)
 		
 		self.nd.set_data('/cluster', data={'master': '', 'status' :  ''})
 		self.nd.set_data('/cluster/servers')
