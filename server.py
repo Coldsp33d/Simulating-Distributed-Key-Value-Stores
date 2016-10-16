@@ -37,7 +37,7 @@ class Server:
     __NOT_FOUND = "404 Not Found"
     __INT_ERROR = "500 Internal Server Error"
 
-    __timeout = 8 # registration timeout
+    __timeout = 15 # registration timeout
 
 
     def __init__(self, server_id, zookeeper_handler, server_address=('', 0), buf_size=None):
@@ -55,24 +55,22 @@ class Server:
                                                             self.socket.getsockname()[1]
         self.name = self.IP + ":" + str(self.port)
 
-        self.zookeeper_handler.set_node('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
+        self.zookeeper_handler.set_data('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
         
-        # np.random.seed(os.getpid())
+        np.random.seed(os.getpid())
         time.sleep(np.random.randint(low=0, high=5)) # random sleep for x seconds 
 
         is_master = False
 
-        with self.zookeeper_handler.get_lock('/cluster/lock'):
-            pprint.pprint(self.zookeeper_handler.get('/cluster')['data']['master'])
-            master_address = self.zookeeper_handler.get('/cluster')['data']['master']
-           
+        with self.zookeeper_handler.get_lock('/cluster/lock', wait=2) as lock:
+            master_address = self.zookeeper_handler.get('/cluster/meta')['data']['master']
+
             if master_address == '':
-                self.zookeeper_handler.set_node('/cluster', data=self.zookeeper_handler.get('/cluster')['data'].update(
+                self.zookeeper_handler.set_node('/cluster/meta', data=
                         {   'master' : list(self.server_address) , 
                             'status' :  'initializing' 
-                        })) # better practice to update the existing dict rather than reinitialize it with a possible loss of data
+                        }) # better practice to update the existing dict rather than reinitialize it with a possible loss of data
                 is_master = True
-
 
         if is_master:  
             print("{server}: Assigned role of MASTER".format(server=self.name)) 
@@ -84,19 +82,14 @@ class Server:
             print("{server}: Assigned role of SLAVE".format(server=self.name)) 
             self.name = '[SLAVE]  ' + self.name
             self.__invoke_slave_routine(tuple(master_address))
+        
+        time.sleep(np.random.randint(low=0, high=3)) 
 
-        time.sleep(np.random.randint(low=0, high=5)) # random sleep for x seconds 
+        print("{server}: Updating mapping...".format(server=self.name)) 
 
-        with self.zookeeper_handler.get_lock('/cluster/lock'):
-            data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.primary_key))['data']
-            data = data if data is not None else {}    
-            data.update({'primary' : ':'.join(list(map(str, self.server_address)))})
-            self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.primary_key), data=data)
-
-            data = self.zookeeper_handler.get('/cluster/mapping/' + str(self.secondary_key))['data']
-            data = data if data is not None else {}
-            data.update({'secondary' : ':'.join(list(map(str, self.server_address)))})
-            self.zookeeper_handler.set_node('/cluster/mapping/' + str(self.secondary_key), data=data)
+        data = {'address' : list(self.server_address) }
+        self.zookeeper_handler.set_data('/cluster/mapping/' + str(self.primary_key) + '/primary', data=data)
+        self.zookeeper_handler.set_data('/cluster/mapping/' + str(self.secondary_key) + '/secondary', data=data)
 
 
     def __del__(self):
@@ -128,9 +121,9 @@ class Server:
 
         print("{server}: Stopping registration".format(server=self.name))
 
-        self.zookeeper_handler.set_data('/cluster', data=self.zookeeper_handler.get('/cluster')['data'].update({'status' :  'ready'}))
+        self.zookeeper_handler.set_data('/cluster/meta', data=self.zookeeper_handler.get('/cluster/meta')['data'].update({'status' :  'ready'}))
 
-        x, y = [i for i in range(len(self.slave_list) + 1)], [(i + 1) % len(self.slave_list) for i in range(len(self.slave_list) + 1)]
+        x, y = [i for i in range(len(self.slave_list) + 1)], [(i + 1) % (len(self.slave_list) + 1) for i in range(len(self.slave_list) + 1)]
 
         while True:
             random.shuffle(x), random.shuffle(y)
