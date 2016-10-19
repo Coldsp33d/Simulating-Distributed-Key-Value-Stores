@@ -1,7 +1,10 @@
-import cluster
+from nd_service_registry import KazooServiceRegistry
+
 import socket
 import random
 import json
+import time
+import pprint
 
 BUFFER_SIZE = 1024
 
@@ -21,15 +24,11 @@ class Client:
 	def __init__(self, buf_size=None):
 		self.buf_size = buf_size if buf_size else self.__buf_size
 
-		self.cluster = cluster.Cluster()
-		self.cluster.master = self.cluster.get_master()
-
-	def __del__(self):
-		self.socket.close()
+		self.master = tuple(KazooServiceRegistry().get('/cluster/meta')['data']['master'])
 
 	def __get_server(self, key, dtype='primary'):
 		socket = get_socket()
-		socket.connect(self.cluster.master)
+		socket.connect(self.master)
 		request = { 'op' 	: 'MAP', 
 					'type'	: dtype, 
 					'key'	: str(key) 
@@ -40,9 +39,12 @@ class Client:
 		response = json.loads(socket.recv(self.buf_size).decode('utf-8'))
 		socket.close()
 
-		return tuple(response['data']['address'])
-		
-	def put(self, key, value, address):
+		try:
+			return tuple(response['data']['address'])
+		except:
+			raise Exception(str(response['status']))
+
+	def put(self, key, value):
 		socket = get_socket()
 		address = self.__get_server(key, dtype='primary')
 
@@ -74,7 +76,7 @@ class Client:
 			socket.connect(secondary_address)
 
 		request = 	{	'op' 	: 	'GET', 
-						'data' 	: 	str(key)
+						'key' 	: 	str(key)
 					}
 		socket.sendall(json.dumps(request).encode('utf-8'))
 		response = json.loads(socket.recv(self.buf_size).decode('utf-8'))
@@ -84,5 +86,86 @@ class Client:
 
 if __name__ == "__main__":
 	client = Client()
+
+	states = {
+        'AK': 'Alaska',
+        'AL': 'Alabama',
+        'AR': 'Arkansas',
+        'AS': 'American Samoa',
+        'AZ': 'Arizona',
+        'CA': 'California',
+        'CO': 'Colorado',
+        'CT': 'Connecticut',
+        'DC': 'District of Columbia',
+        'DE': 'Delaware',
+        'FL': 'Florida',
+        'GA': 'Georgia',
+        'GU': 'Guam',
+        'HI': 'Hawaii',
+        'IA': 'Iowa',
+        'ID': 'Idaho',
+        'IL': 'Illinois',
+        'IN': 'Indiana',
+        'KS': 'Kansas',
+        'KY': 'Kentucky',
+        'LA': 'Louisiana',
+        'MA': 'Massachusetts',
+        'MD': 'Maryland',
+        'ME': 'Maine',
+        'MI': 'Michigan',
+        'MN': 'Minnesota',
+        'MO': 'Missouri',
+        'MP': 'Northern Mariana Islands',
+        'MS': 'Mississippi',
+        'MT': 'Montana',
+        'NA': 'National',
+        'NC': 'North Carolina',
+        'ND': 'North Dakota',
+        'NE': 'Nebraska',
+        'NH': 'New Hampshire',
+        'NJ': 'New Jersey',
+        'NM': 'New Mexico',
+        'NV': 'Nevada',
+        'NY': 'New York',
+        'OH': 'Ohio',
+        'OK': 'Oklahoma',
+        'OR': 'Oregon',
+        'PA': 'Pennsylvania',
+        'PR': 'Puerto Rico',
+        'RI': 'Rhode Island',
+        'SC': 'South Carolina',
+        'SD': 'South Dakota',
+        'TN': 'Tennessee',
+        'TX': 'Texas',
+        'UT': 'Utah',
+        'VA': 'Virginia',
+        'VI': 'Virgin Islands',
+        'VT': 'Vermont',
+        'WA': 'Washington',
+        'WI': 'Wisconsin',
+        'WV': 'West Virginia',
+        'WY': 'Wyoming',
+
+	    'AB': 'Alberta',
+	    'BC': 'British Columbia',
+	    'MB': 'Manitoba',
+	    'NB': 'New Brunswick',
+	    'NL': 'Newfoundland and Labrador',
+	    'NT': 'Northwest Territories',
+	    'NS': 'Nova Scotia',
+	    'NU': 'Nunavut',
+	    'ON': 'Ontario',
+	    'PE': 'Prince Edward Island',
+	    'QC': 'Quebec',
+	    'SK': 'Saskatchewan',
+	    'YT': 'Yukon'
+
+}
+
+
+for k, v in states.items():
+	print(client.put(k, v))
+
+print(client.get('SD'))
 
 

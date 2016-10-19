@@ -42,7 +42,7 @@ class Cluster:
 
 
 if __name__ == "__main__":
-	num_servers = 4
+	num_servers = 3
 	cluster = Cluster(num_servers)
 
 	for i in range(num_servers):
@@ -50,3 +50,5 @@ if __name__ == "__main__":
 		secondary = ':'.join(list(map(str, cluster.nd.get('/cluster/mapping/%d/secondary' %i)['data']['address'])))
 		
 		pprint.pprint({'key' : i, 'primary' : primary, 'secondary' : secondary } )
+
+

@@ -9,7 +9,9 @@ import numpy as np
 import random
 import os
 import copy
+import sys
 
+INT_MAX = np.int64(2 ** 63 - 1)
 
 def get_socket(address=('', 0), sock_type='tcp'):
     if sock_type == 'tcp':
@@ -21,13 +23,13 @@ def get_socket(address=('', 0), sock_type='tcp'):
         pass # not implemented, nor will there be a need
 
 # Pass an existing object in order to circumvent the overhead of re-creation and connection
-def __get_primary_server(key, root='/cluster', zk_handler=KazooServiceRegistry()):
+def get_primary_server(key, root='/cluster', zk_handler=KazooServiceRegistry()):
     return tuple(zk_handler.get(root + '/mapping/' + str(key) + '/primary')['data']['address'])
 
-def __get_secondary_server(key, root='/cluster', zk_handler=KazooServiceRegistry()):
+def get_secondary_server(key, root='/cluster', zk_handler=KazooServiceRegistry()):
     return tuple(zk_handler.get(root + '/mapping/' + str(key) + '/secondary')['data']['address'])
 
-def __get_hash_partition(val, mod):
+def get_hash_partition(val, mod):
     return (np.int64(hash(val)) & INT_MAX) % mod
 
 """ ------------------------------------------------------------------------------------------- """
@@ -50,10 +52,85 @@ class Server:
     __NOT_FOUND = "404 Not Found"
     __INT_ERROR = "500 Internal Server Error"
 
-    __timeout = 15 # registration timeout
-    __backup_delay = 30 # delay between successive backups
+    __timeout = 5 # registration timeout
+    __backup_delay = 5 # delay between successive backups
 
 
+    def __init__(self, server_id, server_address=('', 0), buf_size=None):
+        self.data_dict = { 'primary' : {}, 'secondary' : {} }
+        # primary:      the keys for which the given server is primary
+        # secondary:    the keys for which the given server is secondary
+
+        self.backup_data_dict = { 'primary' : {}, 'secondary' : {} }
+        # primary:      the keys which have to be sent to the primary server when possible
+        # secondary:    the keys which have to be sent to the secondary server when a limit is reached
+        
+        self.server_id = server_id
+        self.zookeeper_handler = KazooServiceRegistry()
+        self.buf_size = buf_size if buf_size else self.__buf_size
+
+
+
+        self.config_list = None
+
+        self.socket = get_socket(server_address)
+        self.socket.listen(100)
+        
+        self.server_address = (self.IP, self.port) = socket.gethostbyname(
+                                                                        socket.gethostname()
+                                                                        ), \
+                                                            self.socket.getsockname()[1]
+        self.name = self.IP + ":" + str(self.port)
+
+        self.zookeeper_handler.set_data('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
+        
+        np.random.seed(os.getpid())
+        time.sleep(np.random.randint(low=0, high=2)) # random sleep for x seconds 
+
+        self.is_master = False
+
+        with self.zookeeper_handler.get_lock('/cluster/lock', wait=2) as lock:
+            master_address = self.zookeeper_handler.get('/cluster/meta')['data']['master']
+
+            if master_address == '':
+                data = {    'master' : list(self.server_address) , 
+                            'status' : 'initializing', 
+                            'size'   : self.zookeeper_handler.get('/cluster/meta')['data']['size']
+                        }
+                self.zookeeper_handler.set_node('/cluster/meta', data=data) 
+                self.is_master = True
+
+        if self.is_master:  
+            print("{server}: Assigned role of MASTER".format(server=self.name)) 
+            self.name = '[MASTER] ' + self.name  
+            self.slave_list = []
+            
+            Server.__master_routine(self)
+            
+        else: 
+            print("{server}: Assigned role of SLAVE".format(server=self.name)) 
+            self.name = '[SLAVE]  ' + self.name
+            
+            Server.__slave_routine(self, tuple(master_address))
+        
+        time.sleep(np.random.randint(low=0, high=3)) 
+
+        print("{server}: Updating mapping...".format(server=self.name)) 
+
+        data = {'address' : list(self.server_address) }
+        self.zookeeper_handler.set_data('/cluster/mapping/' + str(self.primary_key) + '/primary', data=data)
+        self.zookeeper_handler.set_data('/cluster/mapping/' + str(self.secondary_key) + '/secondary', data=data)
+
+        self.cluster_size = self.zookeeper_handler.get('/cluster/meta')['data']['size']
+    
+    # ------------------------------------------------------------------------------------- 
+
+    def __del__(self):
+        print("{server}: Shutting down, thanks!".format(server=self.name))
+        self.socket.close()
+    
+    # -------------------------------------------------------------------------------------
+    
     def __master_routine(self):
         # now listen on a socket for signals from other servers... write a new function to do this and in a separate thread
 
@@ -66,7 +143,7 @@ class Server:
                     set the key to server mapping in zookeeper too
                     self.nd.set_node('/cluster/mapping/' + str(num), data={'primary': ..., 'secondary', ... })
         """
-        self.op_list = ["__reg__", "__config__", "map", "get", "put"]
+        self.op_list = ["__reg__", "__unreg__", "map", "get", "put"]
 
         self.start() # deploy master and listen for registrations
 
@@ -118,7 +195,7 @@ class Server:
     def __slave_routine(self, master_address):
         # get the master address, and send a signal to the master that the other server is ready
         # wait for the ready signal, get server mappings from master and note it down
-        self.op_list = ["__config__", "map", "get", "put"]
+        self.op_list = ["__config__", "get", "put"]
 
         temp_socket = get_socket()
         temp_socket.connect(master_address)
@@ -138,119 +215,51 @@ class Server:
         while not self.configured:
             pass # wait for master to configure slave
 
-    # ------------------------------------------------------------------------------------- 
-
-    def __init__(self, server_id, server_address=('', 0), buf_size=None):
-        self.data_dict = { 'primary' : {}, 'secondary' : {} }
-        # primary:      the keys for which the given server is primary
-        # secondary:    the keys for which the given server is secondary
-
-        self.backup_data_dict = { 'primary' : {}, 'secondary' : {} }
-        # primary:      the keys which have to be sent to the primary server when possible
-        # secondary:    the keys which have to be sent to the secondary server when a limit is reached
-        
-        self.server_id = server_id
-        self.zookeeper_handler = KazooServiceRegistry()
-        self.buf_size = buf_size if buf_size else self.__buf_size
-
-        self.socket = get_socket(server_address)
-        self.socket.listen(100)
-
-        self.config_list = None
-        
-        self.server_address = (self.IP, self.port) = socket.gethostbyname(
-                                                                        socket.gethostname()
-                                                                        ), \
-                                                            self.socket.getsockname()[1]
-        self.name = self.IP + ":" + str(self.port)
-
-        self.zookeeper_handler.set_data('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
-        
-        np.random.seed(os.getpid())
-        time.sleep(np.random.randint(low=0, high=10)) # random sleep for x seconds 
-
-        self.is_master = False
-
-        with self.zookeeper_handler.get_lock('/cluster/lock', wait=2) as lock:
-            master_address = self.zookeeper_handler.get('/cluster/meta')['data']['master']
-
-            if master_address == '':
-                data = {    'master' : list(self.server_address) , 
-                            'status' : 'initializing', 
-                            'size'   : self.zookeeper_handler.get('/cluster/meta')['data']['size']
-                        }
-                self.zookeeper_handler.set_node('/cluster/meta', data=data) 
-                self.is_master = True
-
-        if self.is_master:  
-            print("{server}: Assigned role of MASTER".format(server=self.name)) 
-            self.name = '[MASTER] ' + self.name  
-            self.slave_list = []
-            
-            Server.__master_routine(self)
-            
-        else: 
-            print("{server}: Assigned role of SLAVE".format(server=self.name)) 
-            self.name = '[SLAVE]  ' + self.name
-            
-            Server.__slave_routine(self, tuple(master_address))
-        
-        time.sleep(np.random.randint(low=0, high=3)) 
-
-        print("{server}: Updating mapping...".format(server=self.name)) 
-
-        data = {'address' : list(self.server_address) }
-        self.zookeeper_handler.set_data('/cluster/mapping/' + str(self.primary_key) + '/primary', data=data)
-        self.zookeeper_handler.set_data('/cluster/mapping/' + str(self.secondary_key) + '/secondary', data=data)
-
-        self.cluster_size = self.zookeeper_handler.get('/cluster/meta')['data']['size']
-    
-    # ------------------------------------------------------------------------------------- 
-
-    def __del__(self):
-        print("{server}: Shutting down, thanks!".format(server=self.name))
-        self.socket.close()
-    
-    # ------------------------------------------------------------------------------------- 
+    # -------------------------------------------------------------------------------------  
 
     def __listen_forever(self):
-        def backup_data(entries, server_address, dtype):
-            try:
-                socket = get_socket()
-                request = { 'op'    : 'PUT', 
-                            'type'  : dtype,
-                            'data'  :  entries  
-                           }
-                socket.connect(server_address)                    
-                socket.sendall(json.dumps(request).encode('utf-8'))
-                _ = json.loads(socket.recv(self.buf_size).decode('utf-8'))
-            except:
-                self.backup_data_dict[dtype].update(entries) # request couldn't be processed, put it back and keep it to send later
-            finally:
-                socket.close()
-                return
+        def run_backup_service():
+            def backup_data(entries, server_address, dtype):
+                try:
+                    socket = get_socket()
+                    request = { 'op'    : 'PUT', 
+                                'type'  : dtype,
+                                'data'  :  entries  
+                               }
+                    socket.connect(server_address)                    
+                    socket.sendall(json.dumps(request).encode('utf-8'))
+                    _ = json.loads(socket.recv(self.buf_size).decode('utf-8'))
+                except:
+                    self.backup_data_dict[dtype].update(entries) # request couldn't be processed, put it back and keep it to send later
+                finally:
+                    socket.close()
+                    return
+            
+            last_backup_timestamp = time.time() # setup backup 
+            while True:
+                if time.time() > last_backup_timestamp + self.__backup_delay:
+                    if len(self.backup_data_dict['secondary']) > 0:
+                        print("{server}: Backing up data to secondary...".format(server=self.name))  
+                        entries = copy.copy(self.backup_data_dict['secondary'])
+                        server_address = get_secondary_server(get_hash_partition(list(entries.keys())[0], self.cluster_size))
+                        self.backup_data_dict['secondary'] = {}
+                        backup_data(entries, server_address, 'secondary')
 
-        last_backup_timestamp = time.time() # setup backup
+                    if len(self.backup_data_dict['primary']) > 0:
+                        print("{server}: Sending secondary data to primary...".format(server=self.name))    
+                        server_address = get_primary_server(get_hash_partition(list(entries.keys())[0], self.cluster_size))
+                        entries = copy.copy(self.backup_data_dict['primary'])
+                        self.backup_data_dict['primary'] = {}
+                        backup_data(entries, server_address, 'primary')
+
+                    last_backup_timestamp = time.time()
+            
+        backup_service_thread = threading.Thread(target=run_backup_service)
+        backup_service_thread.start()
+
 
         """ The giant mainloop begins here """
         while self.__keep_alive: 
-            if time.time() >= last_backup_timestamp + 30:
-                if len(self.backup_data_dict['secondary']) > 0:
-                    print("{server}: Backing up data to secondary...".format(server=self.name))  
-                    server_address = __get_secondary_server(__get_hash_partition(list(entries.keys())[0], self.cluster_size))
-                    entries = copy.copy(self.backup_data_dict['secondary'])
-                    self.backup_data_dict['secondary'] = {}
-                    threading.Thread(target=backup_data, args=(entries, server_address, 'secondary'))
-
-                if len(self.backup_data_dict['primary']) > 0:
-                    print("{server}: Sending secondary data to primary...".format(server=self.name))    
-                    server_address = ____get_primary_server(__get_hash_partition(list(entries.keys())[0], self.cluster_size))
-                    entries = copy.copy(self.backup_data_dict['primary'])
-                    self.backup_data_dict['primary'] = {}
-                    threading.Thread(target=backup_data, args=(entries, server_address, 'primary'))
-                    
-                last_backup_timestamp = time.time()
-
             (client_socket, client_address) = self.socket.accept()
             print("{server}: Connected to {client}".format(server=self.name, client=client_address)) 
  
@@ -286,17 +295,24 @@ class Server:
                     response = {'status' : self.__BAD_REQ }
                     client_socket.sendall(json.dumps(response).encode('utf-8')) 
 
-            if op_code == "map": 
+            if op_code == "__unreg__": 
+                # TODO: remove reg info for that server, remove mapping
+                # self.accept_reg = True
+                pass
+
+            elif op_code == "map": 
                 print("{server}: Received MAP request from {client}".format(server=self.name, client=client_address)) 
                 try:
                     if self.is_master:
                         response = {    'status'    :   self.__SUCCESS, 
                                         'data'      :   {'address' : '' } 
                                     }
+                        hashed_key = get_hash_partition(data['key'], self.cluster_size)
+
                         if data['type'] == 'primary':
-                            response['data']['address'] = list(__get_primary_server(data['key']))
+                            response['data']['address'] = list(get_primary_server(hashed_key))
                         elif data['type'] == 'secondary':
-                            response['data']['address'] = list(__get_secondary_server(data['key']))
+                            response['data']['address'] = list(get_secondary_server(hashed_key))
                         else:
                             raise Exception
                         client_socket.sendall(json.dumps(response).encode('utf-8'))         
@@ -305,6 +321,7 @@ class Server:
                         raise Exception
 
                 except:
+                    print "{server}:".format(server=self.name), sys.exc_info()[1]
                     response = {'status' : self.__BAD_REQ }
                     client_socket.sendall(json.dumps(response).encode('utf-8')) 
 
@@ -318,6 +335,7 @@ class Server:
                     client_socket.sendall(json.dumps(response).encode('utf-8')) 
                     self.configured = True
                 except:
+                    print "{server}:".format(server=self.name), sys.exc_info()[1]
                     response = {'status' : self.__INT_ERROR }
                     client_socket.sendall(json.dumps(response).encode('utf-8'))                    
 
@@ -326,21 +344,23 @@ class Server:
                 print("{server}: Received PUT request from {client}".format(server=self.name, client=client_address)) 
                 try:
                     # Assume one of the cluster servers sent this request
-                    if data.has_key['type']:
+                    if data.has_key('type'):
                         if data['type'] == 'secondary': # data is meant to be backup
                             self.data_dict['secondary'].update(data['data']) 
                         elif data['type'] == 'primary': # happens if this server was down earlier, the secondary server is now sending this data 
                             self.data_dict['primary'].update(data['data'])
                     
                     else:
-                        hashed_key = __get_hash_partition(data['key'], self.cluster_size)
+                        entry = copy.copy(data['data'])
+                        hashed_key = get_hash_partition(data['data'].popitem()[0], self.cluster_size)
 
                         if hashed_key == self.primary_key:
-                            entry = { data['key'] : data['value']}
                             self.data_dict['primary'].update(entry) # update it in the primary key list
                             self.backup_data_dict['secondary'].update(entry) # mark it for backup later 
                         elif hashed_key == self.secondary_key:
-                            self.backup_data_dict['secondary'].update(data['data'])
+                            print("{server}: Secondary server servicing PUT request".format(server=self.name, client=client_address)) 
+                            self.data_dict['secondary'].update(entry)
+                            self.backup_data_dict['primary'].update(entry)
                         else:
                             raise NotResponsibleForKeyException
                     
@@ -350,22 +370,25 @@ class Server:
                     response = {'status' : self.__BAD_REQ, 'message' : 'not responsible for key' }
                     
                 except:
+                    print "{server}:".format(server=self.name), sys.exc_info()[1]
                     response = {'status' : self.__INT_ERROR }
                     
                 finally:
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
 
             elif op_code == "get":
+                print self.data_dict
                 print("{server}: Received GET request from {client}".format(server=self.name, client=client_address)) 
                 try:
                     response = {    'status'    :   self.__SUCCESS, 
                                     'data'      :   ''
                                 }
-                    if self.data_dict['primary'].has_key(data['data']):
-                        response['data'] = self.data_dict['primary'][data['data']] 
+                    print data['key']
+                    if self.data_dict['primary'].has_key(data['key']):
+                        response['data'] = self.data_dict['primary'][data['key']] 
                     
-                    elif self.data_dict['secondary'].has_key(data['data']):
-                        response['data'] = self.data_dict['secondary'][data['data']] 
+                    elif self.data_dict['secondary'].has_key(data['key']):
+                        response['data'] = self.data_dict['secondary'][data['key']] 
                                         
                     else:
                         raise KeyNotFoundException
@@ -374,6 +397,7 @@ class Server:
                     response = {    'status'    :   self.__NOT_FOUND, 'message' : 'key not located' }   
                 
                 except:
+                    print "{server}:".format(server=self.name), sys.exc_info()[1]
                     response = {'status' : self.__INT_ERROR }
                 
                 finally:
@@ -381,18 +405,31 @@ class Server:
 
             client_socket.close()   # finally, close the connection once everything's done
 
+        backup_service_thread.join(0)
+
     # ------------------------------------------------------------------------------------- 
 
     def start(self):
         self.__keep_alive = True
         self.service_task = threading.Thread(target=self.__listen_forever)
-        self.service_task.daemon = True
+        self.service_task.start() 
+
+    # ------------------------------------------------------------------------------------- 
+
+    def restart(self):
+        # TODO: re-register with the master
+        self.__keep_alive = True
+        self.service_task = threading.Thread(target=self.__listen_forever)
         self.service_task.start() 
 
     # ------------------------------------------------------------------------------------- 
 
     def stop(self):
         self.__keep_alive = False
-        self.service_task.join(3)
+        self.socket.close()
+        self.service_task.join(1)
+
+        # TODO: now unregister from the cluster, inform the master that you're out of there
+
 
 """ ------------------------------------------------------------------------------------------- """
