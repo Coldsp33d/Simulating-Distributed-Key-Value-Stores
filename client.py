@@ -167,5 +167,7 @@ for k, v in states.items():
 	print(client.put(k, v))
 
 print(client.get('SD'))
+print(client.get('AR'))
+print(client.get('MD'))
 
 
