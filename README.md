@@ -55,6 +55,5 @@ DONE
 * Migration from multithreading to multiprocessing - less flaky now (DONE)
 * Master uploads data to zookeeper's /cluster node  (DONE - actually every server uploads their own server mapping)
 * Implement Data integrity (DONE - need to test)
+* Simulate server death (DONE but server cannot be brought back to life)
 
-TODO 
-* Simulate server death - either use interactive shell to stop a service, or use a flag and send a "resource temporarily unavailable for some time limit" (needs some refactoring... how will it be handled? the socket cannot be reused)
