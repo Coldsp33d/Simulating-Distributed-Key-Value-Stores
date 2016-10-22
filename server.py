@@ -78,7 +78,7 @@ class Server:
                                                                         socket.gethostname()
                                                                         ), \
                                                             self.socket.getsockname()[1]
-        self.name = self.IP + ":" + str(self.port)
+        self.name = self.IP + ":" + str(self.port) + ' (' + str(os.getpid()) + ')'
 
         self.zookeeper_handler.set_data('/cluster/servers/' + ':'.join(list(map(str, self.server_address))) )
         
@@ -97,11 +97,11 @@ class Server:
                         }
                 self.zookeeper_handler.set_node('/cluster/meta', data=data) 
                 self.is_master = True
-                print("{server}: Setting status to INITIALIZING".format(server=self.name))
 
         if self.is_master:  
             print("{server}: Assigned role of MASTER".format(server=self.name)) 
             self.name = '[MASTER] ' + self.name  
+            print("{server}: Set status to INITIALIZING".format(server=self.name))
             self.slave_list = []
             
             Server.__master_routine(self)
@@ -121,7 +121,11 @@ class Server:
 
     def __del__(self):
         print("{server}: Shutting down, thanks!".format(server=self.name))
+        
+        self.keep_alive = False
         self.socket.close()
+        self.service_task.join(1)
+
     
     # -------------------------------------------------------------------------------------
     
@@ -151,7 +155,7 @@ class Server:
             pass
         self.accept_reg = False
 
-        print("{server}: Setting status to READY".format(server=self.name))
+        print("{server}: Set status to READY".format(server=self.name))
 
         self.zookeeper_handler.set_data('/cluster/meta', data=self.zookeeper_handler.get('/cluster/meta')['data'].update({'status' :  'ready'}))
 
@@ -325,16 +329,18 @@ class Server:
 
             elif op_code == "put":
                 """ Format: { 'op' : ..., 'key' : ..., 'value' : ... } """
-                print("{server}: PUT from {client}".format(server=self.name, client=client_address)) 
                 try:
                     # Assume one of the cluster servers sent this request
                     if data.has_key('type'):
+                        print("{server}: bkupPUT from {client}".format(server=self.name, client=client_address)) 
+
                         if data['type'] == 'secondary': # data is meant to be backup
                             self.data_dict['secondary'].update(data['data']) 
                         elif data['type'] == 'primary': # happens if this server was down earlier, the secondary server is now sending this data 
                             self.data_dict['primary'].update(data['data'])
                     
                     else:
+                        print("{server}: PUT from {client}".format(server=self.name, client=client_address)) 
                         entry = copy.copy(data['data'])
                         hashed_key = get_hash_partition(data['data'].popitem()[0], self.cluster_size)
 
@@ -342,7 +348,7 @@ class Server:
                             self.data_dict['primary'].update(entry) # update it in the primary key list
                             self.backup_data_dict['secondary'].update(entry) # mark it for backup later 
                         elif hashed_key == self.secondary_key:
-                            print("{server}: Secondary server servicing PUT request".format(server=self.name, client=client_address)) 
+                            print("{server}: Secondary server for this key".format(server=self.name, client=client_address)) 
                             self.data_dict['secondary'].update(entry)
                             self.backup_data_dict['primary'].update(entry)
                         else:
@@ -361,17 +367,18 @@ class Server:
                     client_socket.sendall(json.dumps(response).encode('utf-8'))
 
             elif op_code == "get":
-                print self.data_dict
                 print("{server}: GET from {client}".format(server=self.name, client=client_address)) 
+                pprint.pprint(self.data_dict)
                 try:
                     response = {    'status'    :   self.__SUCCESS, 
                                     'data'      :   ''
                                 }
-                    print data['key']
+                    pprint.pprint(data)
                     if self.data_dict['primary'].has_key(data['key']):
                         response['data'] = self.data_dict['primary'][data['key']] 
                     
                     elif self.data_dict['secondary'].has_key(data['key']):
+                        print("{server}: Secondary server for this key".format(server=self.name, client=client_address))
                         response['data'] = self.data_dict['secondary'][data['key']] 
                                         
                     else:
@@ -390,14 +397,5 @@ class Server:
             client_socket.close()   # finally, close the connection once everything's done
 
         backup_service_thread.join(0)
-
-    # ------------------------------------------------------------------------------------- 
-
-    def stop(self):
-        if self.keep_alive:
-            self.keep_alive = False
-
-            self.socket.close()
-            self.service_task.join(1)
 
 """ ------------------------------------------------------------------------------------------- """

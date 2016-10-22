@@ -5,6 +5,7 @@ import random
 import json
 import time
 import pprint
+import sys
 
 BUFFER_SIZE = 1024
 
@@ -51,6 +52,8 @@ class Client:
 		try:
 			socket.connect(address)
 		except:
+			socket.close()
+			socket = get_socket()
 			secondary_address = self.__get_server(key, dtype='secondary')
 			socket.connect(secondary_address)
 
@@ -72,7 +75,10 @@ class Client:
 		try:
 			socket.connect(address)
 		except:
+			socket.close()
+			socket = get_socket()
 			secondary_address = self.__get_server(key, dtype='secondary')
+			print secondary_address
 			socket.connect(secondary_address)
 
 		request = 	{	'op' 	: 	'GET', 
@@ -162,12 +168,13 @@ if __name__ == "__main__":
 
 }
 
+if sys.argv[1] in ['--put', '-p']:
+	for k, v in states.items():
+		print(client.put(k, v))
 
-for k, v in states.items():
-	print(client.put(k, v))
-
-print(client.get('SD'))
-print(client.get('AR'))
-print(client.get('MD'))
+elif sys.argv[1] in ['--get', '-g']:
+	#print(client.get('SD'))
+	print(client.get('AR'))
+	#print(client.get('MD'))
 
 
