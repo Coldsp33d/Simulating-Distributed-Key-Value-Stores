@@ -3,6 +3,7 @@ from nd_service_registry import KazooServiceRegistry
 
 from server import Server
 
+import sys
 import numpy as np
 import logging
 import pprint
@@ -42,7 +43,11 @@ class Cluster:
 
 
 if __name__ == "__main__":
-	num_servers = 3
+	if len(sys.argv) > 1:
+		num_servers = int(sys.argv[1])
+	else:
+		num_servers = 3
+		 
 	cluster = Cluster(num_servers)
 
 	for i in range(num_servers):
